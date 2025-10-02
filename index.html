@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socratic Case Digest Generator</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for professional, clean look */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Light gray background */
+        }
+        .digest-card {
+            border-left: 6px solid #1e3a8a; /* Dark blue accent for legal feel */
+        }
+        .digest-section-title {
+            color: #1e3a8a; /* Dark blue for titles */
+            font-weight: 700;
+        }
+        .facts-content {
+            font-size: 0.95rem; /* Slightly smaller text for recitation ease */
+            line-height: 1.5;
+        }
+        .loading-animation {
+            border-top-color: #f3f3f3;
+            border-left-color: #f3f3f3;
+            border-bottom-color: #f3f3f3;
+            border-right-color: #1e3a8a;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Custom scrollbar for output area */
+        .scroll-area::-webkit-scrollbar {
+            width: 8px;
+        }
+        .scroll-area::-webkit-scrollbar-thumb {
+            background-color: #94a3b8;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold text-gray-800">Socratic Case Digest Generator</h1>
+            <p class="text-gray-500 mt-2">Generate concise digests optimized for oral recitation. Powered by Gemini.</p>
+        </header>
+
+        <!-- Input Form -->
+        <div class="bg-white p-6 md:p-8 rounded-xl shadow-lg mb-8 border border-gray-100">
+            <form id="digestForm" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="caseInput" class="block text-sm font-medium text-gray-700 mb-2">G.R. Number or Case Name <span class="text-red-500">*</span></label>
+                    <input type="text" id="caseInput" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150" placeholder="e.g., G.R. No. 191002 or Macalintal v. COMELEC">
+                </div>
+                <div>
+                    <label for="subjectInput" class="block text-sm font-medium text-gray-700 mb-2">Subject (for Relevance) <span class="text-red-500">*</span></label>
+                    <input type="text" id="subjectInput" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150" placeholder="e.g., Constitutional Law 1, Criminal Law">
+                </div>
+                <div class="md:col-span-2 mt-4">
+                    <button type="submit" id="generateButton" class="w-full bg-blue-700 text-white p-3 rounded-lg font-semibold hover:bg-blue-800 transition duration-300 shadow-md">
+                        Generate Digest
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Output and Loading Area -->
+        <div id="outputContainer">
+            <div id="loadingIndicator" class="hidden text-center p-6 bg-yellow-50 text-yellow-800 rounded-xl shadow-inner">
+                <div class="inline-block w-8 h-8 border-4 rounded-full loading-animation mr-3"></div>
+                <span class="font-medium">Searching jurisprudence and synthesizing digest... (Please be patient, this may take a moment)</span>
+            </div>
+
+            <div id="errorDisplay" class="hidden text-center p-6 bg-red-100 text-red-800 rounded-xl shadow-inner">
+                <p class="font-semibold">Generation Failed.</p>
+                <p id="errorMessage" class="text-sm mt-1"></p>
+            </div>
+
+            <!-- Digest Card Output -->
+            <div id="digestOutput" class="hidden bg-white p-6 md:p-8 rounded-xl shadow-2xl digest-card transition-opacity duration-500 scroll-area max-h-[80vh] overflow-y-auto">
+                <h2 class="text-2xl font-bold mb-4 text-gray-800 border-b pb-2">Generated Digest</h2>
+                
+                <div id="digestContent" class="space-y-6">
+                    <!-- Digest content will be inserted here -->
+                </div>
+
+                <div id="citationSources" class="mt-8 pt-4 border-t border-gray-200">
+                    <p class="text-xs font-semibold text-gray-600 mb-2">Source Citations:</p>
+                    <ul id="sourcesList" class="text-xs text-gray-500 space-y-1">
+                        <!-- Sources will be inserted here -->
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Global variables for Firebase configuration are typically available in the execution environment.
+        const apiKey = ""; // API key is handled by the Canvas environment for this model.
+        const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+
+        // UI Elements
+        const form = document.getElementById('digestForm');
+        const caseInput = document.getElementById('caseInput');
+        const subjectInput = document.getElementById('subjectInput');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const digestOutput = document.getElementById('digestOutput');
+        const digestContent = document.getElementById('digestContent');
+        const sourcesList = document.getElementById('sourcesList');
+        const generateButton = document.getElementById('generateButton');
+        const errorDisplay = document.getElementById('errorDisplay');
+        const errorMessage = document.getElementById('errorMessage');
+
+        /**
+         * Parses the raw text output from the LLM into structured digest sections.
+         * Assumes the LLM adheres to the strict 'Facts: ... \n\nIssue: ...' format.
+         * @param {string} rawText The raw text from the Gemini API.
+         * @returns {Object} Structured digest or null if parsing fails.
+         */
+        function parseDigest(rawText) {
+            const sections = {};
+            const sectionNames = ['Facts:', 'Issue:', 'Ruling:', 'Doctrine:'];
+            
+            // Normalize newline characters and split by section marker
+            const normalizedText = rawText.replace(/\r\n/g, '\n').trim();
+
+            let currentSection = null;
+            let currentContent = [];
+
+            // Split the text based on the section titles and process
+            const parts = normalizedText.split(/^(Facts:|Issue:|Ruling:|Doctrine:)/gm);
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i].trim();
+                if (sectionNames.includes(part)) {
+                    // This is a section title
+                    currentSection = part.slice(0, -1).toLowerCase(); // 'facts'
+                } else if (currentSection && part) {
+                    // This is the content for the current section
+                    sections[currentSection] = part.trim();
+                    currentSection = null; // Reset for the next section title
+                }
+            }
+
+            // Simple validation check: ensure all 4 sections are present
+            if (sections.facts && sections.issue && sections.ruling && sections.doctrine) {
+                return sections;
+            }
+            console.error("Failed to parse all digest sections. Raw output:", rawText);
+            return null;
+        }
+
+
+        /**
+         * Calls the Gemini API with exponential backoff for robustness.
+         * @param {string} caseName Case name or GR Number.
+         * @param {string} subject Subject of the law.
+         */
+        async function generateDigest(caseName, subject) {
+            const systemPrompt = `You are an AI specializing in Philippine Supreme Court jurisprudence, acting as a study aid for law students. Your primary goal is to generate a concise, high-impact case digest optimized for oral recitation (Socratic method). The output MUST strictly follow the format: 'Facts: [narrative]\n\nIssue: [question]\n\nRuling: [disposition]\n\nDoctrine: [principle]'. The 'Facts' must be short, precise, and contain essential names, dates, and legal keywords, making it readable discreetly. The 'Doctrine' and 'Issue' must be directly relevant to the specific legal subject provided. Do not include any introductory or concluding text outside of the required format.`;
+            const userQuery = `Generate a digest for the case: ${caseName}. The relevant legal subject is: ${subject}.`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }], // Enable Google Search grounding
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+
+            const maxRetries = 5;
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(`${apiUrl}?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && attempt < maxRetries - 1) {
+                            const delay = Math.pow(2, attempt) * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue; // Retry
+                        }
+                        throw new Error(`API call failed with status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const candidate = result.candidates?.[0];
+
+                    if (!candidate || !candidate.content?.parts?.[0]?.text) {
+                        throw new Error("API response was empty or malformed.");
+                    }
+
+                    const rawText = candidate.content.parts[0].text;
+                    const digest = parseDigest(rawText);
+
+                    if (!digest) {
+                         throw new Error("Could not parse the generated text into the required Facts, Issue, Ruling, and Doctrine format. Please try refining your input.");
+                    }
+
+                    // Extract sources
+                    let sources = [];
+                    const groundingMetadata = candidate.groundingMetadata;
+                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                        sources = groundingMetadata.groundingAttributions
+                            .map(attribution => ({
+                                uri: attribution.web?.uri,
+                                title: attribution.web?.title,
+                            }))
+                            .filter(source => source.uri && source.title);
+                    }
+
+                    return { digest, sources };
+
+                } catch (error) {
+                    console.error(`Attempt ${attempt + 1} failed:`, error.message);
+                    if (attempt === maxRetries - 1) {
+                        throw new Error(`Failed to generate digest after ${maxRetries} attempts: ${error.message}`);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Renders the generated digest and sources to the UI.
+         * @param {Object} digest The structured digest object.
+         * @param {Array} sources Array of citation source objects.
+         */
+        function renderDigest({ digest, sources }) {
+            // 1. Render Digest Content
+            digestContent.innerHTML = '';
+            const sectionOrder = ['facts', 'issue', 'ruling', 'doctrine'];
+            const titleMap = {
+                facts: 'Facts',
+                issue: 'Issue',
+                ruling: 'Ruling',
+                doctrine: 'Doctrine'
+            };
+
+            sectionOrder.forEach(key => {
+                const title = titleMap[key];
+                const content = digest[key];
+                
+                if (content) {
+                    const sectionDiv = document.createElement('div');
+                    sectionDiv.className = 'p-4 rounded-lg bg-gray-50'; // Light background for separation
+                    
+                    const titleElem = document.createElement('h3');
+                    titleElem.className = 'text-lg digest-section-title mb-1';
+                    titleElem.textContent = title;
+                    sectionDiv.appendChild(titleElem);
+
+                    const contentElem = document.createElement('p');
+                    contentElem.className = key === 'facts' ? 'text-gray-700 facts-content' : 'text-gray-800 font-medium';
+                    contentElem.textContent = content;
+                    sectionDiv.appendChild(contentElem);
+
+                    digestContent.appendChild(sectionDiv);
+                }
+            });
+
+            // 2. Render Sources
+            sourcesList.innerHTML = '';
+            if (sources.length > 0) {
+                sources.forEach((source, index) => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'hover:text-blue-600 transition duration-150';
+                    listItem.innerHTML = `
+                        <a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="flex items-start">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 mt-[2px] flex-shrink-0 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0l3 3a2 2 0 11-2.828 2.828l-3-3a2 2 0 010-2.828 1 1 0 00-1.414-1.414 4 4 0 000 5.656l3 3a4 4 0 005.656-5.656l-3-3a4 4 0 00-5.656 0 1 1 0 001.414 1.414z" clip-rule="evenodd" />
+                            </svg>
+                            <span class="underline">${source.title || source.uri}</span>
+                        </a>
+                    `;
+                    sourcesList.appendChild(listItem);
+                });
+            } else {
+                const listItem = document.createElement('li');
+                listItem.textContent = 'No specific search grounding sources were attached.';
+                sourcesList.appendChild(listItem);
+            }
+
+            digestOutput.classList.remove('hidden');
+        }
+
+        // --- Event Listener ---
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const caseName = caseInput.value.trim();
+            const subject = subjectInput.value.trim();
+
+            if (!caseName || !subject) {
+                alert('Please fill in both the Case Name/GR Number and the Subject.');
+                return;
+            }
+
+            // Hide previous results and show loading
+            digestOutput.classList.add('hidden');
+            errorDisplay.classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+            generateButton.disabled = true;
+            generateButton.textContent = 'Synthesizing...';
+
+            try {
+                const result = await generateDigest(caseName, subject);
+                renderDigest(result);
+            } catch (error) {
+                console.error("Critical error during digest generation:", error);
+                errorMessage.textContent = error.message;
+                errorDisplay.classList.remove('hidden');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                generateButton.disabled = false;
+                generateButton.textContent = 'Generate Digest';
+            }
+        });
+    </script>
+</body>
+</html>
